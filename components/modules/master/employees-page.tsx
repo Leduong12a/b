@@ -1,0 +1,443 @@
+"use client";
+
+import { type ColumnDef } from "@tanstack/react-table";
+import * as React from "react";
+import { useRouter } from "next/navigation";
+import { ExcelDataGrid } from "@/components/shared/data-grid/excel-data-grid";
+import {
+  DataGridMenuDeleteItem,
+  DataGridMenuEditItem,
+} from "@/components/shared/data-grid/data-grid-action-buttons";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { EmployeeRowDetailPanel } from "@/components/modules/master/employee-row-detail-panel";
+import { EmployeesRolesPanel } from "@/components/modules/master/employees-roles-panel";
+import { DetailTabStrip } from "@/components/ui/detail-tab-strip";
+import { CurrencyInput } from "@/components/ui/currency-input";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { importEmployeesFromExcel } from "@/lib/actions/employees-import";
+import { listAppRolesPicker } from "@/lib/actions/app-roles";
+import { permissionPresetLabel } from "@/lib/auth/permission-presets";
+import { formatDate } from "@/lib/format/date";
+import {
+  createEmployee,
+  deleteEmployee,
+  listEmployees,
+  suggestNextEmployeeCode,
+  updateEmployee,
+  type EmployeeRow,
+} from "@/lib/actions/employees";
+
+export function EmployeesPage() {
+  const router = useRouter();
+  const [pageTab, setPageTab] = React.useState<"employees" | "roles">("employees");
+  const [gridReload, setGridReload] = React.useState(0);
+  const [rolePickerRev, setRolePickerRev] = React.useState(0);
+  const bumpGrid = React.useCallback(() => {
+    setGridReload((n) => n + 1);
+    setRolePickerRev((n) => n + 1);
+    router.refresh();
+  }, [router]);
+  const [roleOptions, setRoleOptions] = React.useState<{ id: string; code: string; name: string }[]>([]);
+  React.useEffect(() => {
+    let cancelled = false;
+    void listAppRolesPicker()
+      .then((r) => {
+        if (!cancelled) setRoleOptions(r);
+      })
+      .catch(() => {
+        if (!cancelled) setRoleOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [rolePickerRev, pageTab]);
+  const [open, setOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<EmployeeRow | null>(null);
+  const [pending, setPending] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const [code, setCode] = React.useState("");
+  const [fullName, setFullName] = React.useState("");
+  const [appRoleId, setAppRoleId] = React.useState("");
+  const [salary, setSalary] = React.useState("0");
+  const [suggestingCode, setSuggestingCode] = React.useState(false);
+  const createRequestRef = React.useRef(0);
+  const [phone, setPhone] = React.useState("");
+  const [email, setEmail] = React.useState("");
+  const [address, setAddress] = React.useState("");
+  const [username, setUsername] = React.useState("");
+  const [passwordPlain, setPasswordPlain] = React.useState("");
+  const [notes, setNotes] = React.useState("");
+  const [isActive, setIsActive] = React.useState(true);
+  const fileImportRef = React.useRef<HTMLInputElement>(null);
+  const [importBusy, setImportBusy] = React.useState(false);
+  const [gridFilters, setGridFilters] = React.useState<Record<string, string>>({
+    is_active: "true",
+  });
+
+  const reset = () => {
+    setEditing(null);
+    setCode("");
+    setFullName("");
+    setAppRoleId("");
+    setSalary("0");
+    setPhone("");
+    setEmail("");
+    setAddress("");
+    setUsername("");
+    setPasswordPlain("");
+    setNotes("");
+    setIsActive(true);
+    setErr(null);
+  };
+
+  const openCreate = () => {
+    reset();
+    setOpen(true);
+    setSuggestingCode(true);
+    const requestId = createRequestRef.current + 1;
+    createRequestRef.current = requestId;
+    void suggestNextEmployeeCode()
+      .then((nextCode) => {
+        if (createRequestRef.current === requestId) setCode(nextCode);
+      })
+      .catch(() => {
+        if (createRequestRef.current === requestId) setCode("");
+      })
+      .finally(() => {
+        if (createRequestRef.current === requestId) setSuggestingCode(false);
+      });
+  };
+
+  const openEdit = (row: EmployeeRow) => {
+    createRequestRef.current += 1;
+    setSuggestingCode(false);
+    setEditing(row);
+    setCode(row.code);
+    setFullName(row.full_name);
+    setAppRoleId(row.app_role_id ?? "");
+    setSalary(String(row.base_salary));
+    setPhone(row.phone ?? "");
+    setEmail(row.email ?? "");
+    setAddress(row.address ?? "");
+    setUsername(row.username ?? "");
+    setPasswordPlain(row.password_plain ?? "");
+    setNotes(row.notes ?? "");
+    setIsActive(row.is_active);
+    setErr(null);
+    setOpen(true);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPending(true);
+    setErr(null);
+    const salaryNum = Number(salary);
+    if (!Number.isFinite(salaryNum) || salaryNum < 0) {
+      setErr("Lương cơ bản không hợp lệ.");
+      setPending(false);
+      return;
+    }
+    try {
+      const payload = {
+        code: code.trim(),
+        full_name: fullName.trim(),
+        app_role_id: appRoleId.trim(),
+        base_salary: salaryNum,
+        phone: phone.trim() || null,
+        email: email.trim() || null,
+        address: address.trim() || null,
+        username: username.trim() || null,
+        password_plain: passwordPlain || null,
+        notes: notes.trim() || null,
+        is_active: isActive,
+      };
+      if (editing) await updateEmployee(editing.id, payload);
+      else await createEmployee(payload);
+      setOpen(false);
+      reset();
+      bumpGrid();
+    } catch (e2) {
+      setErr(e2 instanceof Error ? e2.message : "Lỗi");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const onPickExcel = () => fileImportRef.current?.click();
+
+  const onExcelSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImportBusy(true);
+    try {
+      const fd = new FormData();
+      fd.set("file", file);
+      const res = await importEmployeesFromExcel(fd);
+      if (res.ok) {
+        const warn = res.errors?.length
+          ? "\n\nCảnh báo:\n" + res.errors.slice(0, 40).join("\n") + (res.errors.length > 40 ? "\n…" : "")
+          : "";
+        alert((res.message ?? "Nhập xong.") + warn);
+        bumpGrid();
+      } else {
+        const detail = res.errors?.length
+          ? "\n\n" + res.errors.slice(0, 40).join("\n") + (res.errors.length > 40 ? "\n…" : "")
+          : "";
+        alert((res.message ?? "Nhập thất bại.") + detail);
+      }
+    } catch (e2) {
+      alert(e2 instanceof Error ? e2.message : "Lỗi nhập file");
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
+  const onDelete = async (row: EmployeeRow) => {
+    if (!confirm("Xóa NV " + row.code + "?")) return;
+    try {
+      await deleteEmployee(row.id);
+      bumpGrid();
+    } catch (e2) {
+      alert(e2 instanceof Error ? e2.message : "Không xóa được");
+    }
+  };
+
+  const columns = React.useMemo<ColumnDef<EmployeeRow, unknown>[]>(
+    () => [
+      { accessorKey: "code", header: "Mã NV", meta: { filterKey: "code", filterType: "text" } },
+      {
+        accessorKey: "full_name",
+        header: "Tên",
+        meta: { filterKey: "full_name", filterType: "text" },
+      },
+      {
+        id: "app_role",
+        header: "Vai trò đăng nhập",
+        cell: ({ row }) => row.original.app_role_name ?? "—",
+      },
+      { accessorKey: "role", header: "Chức danh (đồng bộ)" },
+      {
+        accessorKey: "permissions",
+        header: "Mã quyền",
+        cell: ({ row }) => row.original.app_role_code ?? permissionPresetLabel(row.original.permissions),
+      },
+      { accessorKey: "base_salary", header: "Lương CB", cell: ({ getValue }) => Number(getValue()).toLocaleString("vi-VN") },
+      { accessorKey: "phone", header: "SĐT" },
+      { accessorKey: "email", header: "Email" },
+      { accessorKey: "address", header: "Địa chỉ", meta: { filterKey: "address", filterType: "text" } },
+      { accessorKey: "username", header: "Tài khoản" },
+      {
+        accessorKey: "auth_user_id",
+        header: "Auth user",
+        cell: ({ getValue }) => (getValue() as string | null)?.slice(0, 8) ?? "—",
+      },
+      { accessorKey: "notes", header: "Ghi chú", meta: { filterKey: "notes", filterType: "text" } },
+      {
+        accessorKey: "is_active",
+        header: "Hoạt động",
+        meta: {
+          filterKey: "is_active",
+          filterType: "select",
+          filterOptions: [
+            { value: "true", label: "Có" },
+            { value: "false", label: "Không" },
+          ],
+        },
+        cell: ({ getValue }) => ((getValue() as boolean) ? "Có" : "Không"),
+      },
+      {
+        accessorKey: "created_at",
+        header: "Tạo lúc",
+        size: 160,
+        cell: ({ getValue }) => formatDate(String(getValue())),
+      },
+      {
+        accessorKey: "updated_at",
+        header: "Cập nhật",
+        size: 160,
+        cell: ({ getValue }) => formatDate(String(getValue())),
+      },
+      {
+        id: "actions",
+        header: "Thao tác",
+        enableHiding: false,
+        meta: { filterType: "none" },
+        cell: ({ row }) => (
+          <>
+            <DataGridMenuEditItem onSelect={() => openEdit(row.original)}>Sửa</DataGridMenuEditItem>
+            <DataGridMenuDeleteItem onSelect={() => void onDelete(row.original)}>Xóa</DataGridMenuDeleteItem>
+          </>
+        ),
+      },
+    ],
+    [],
+  );
+
+  return (
+    <>
+      <div className="mb-4">
+        <DetailTabStrip
+          items={[
+            { id: "employees", label: "Nhân viên" },
+            { id: "roles", label: "Vai trò & phân quyền" },
+          ]}
+          value={pageTab}
+          onChange={(id) => setPageTab(id as "employees" | "roles")}
+        />
+      </div>
+      {pageTab === "roles" ? (
+        <EmployeesRolesPanel onRolesChanged={bumpGrid} />
+      ) : (
+        <ExcelDataGrid<EmployeeRow>
+          moduleId="employees"
+          title="Nhân sự"
+          columns={columns}
+          list={listEmployees}
+          reloadSignal={gridReload}
+          filters={gridFilters}
+          onFiltersChange={setGridFilters}
+          renderRowDetail={(row) => <EmployeeRowDetailPanel row={row} />}
+          rowDetailTitle={(r) => "NV " + r.code}
+          toolbarExtra={
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileImportRef}
+                type="file"
+                accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                className="hidden"
+                onChange={(ev) => void onExcelSelected(ev)}
+              />
+              <Button
+                variant="secondary"
+                type="button"
+                size="sm"
+                disabled={importBusy}
+                onClick={onPickExcel}
+              >
+                {importBusy ? "Đang nhập…" : "Nhập Excel (bảng lương)"}
+              </Button>
+              <Button variant="primary" type="button" size="sm" onClick={openCreate}>
+                Thêm NV
+              </Button>
+            </div>
+          }
+          getRowId={(r) => r.id}
+        />
+      )}
+      <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
+        <DialogContent size="xl" className="max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle>{editing ? "Sửa nhân viên" : "Thêm nhân viên"}</DialogTitle>
+            <DialogDescription>Liên kết Auth có thể bổ sung sau.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(e) => void submit(e)} className="grid gap-4 sm:grid-cols-2">
+            {err ? <p className="text-sm text-[#b91c1c] sm:col-span-2">{err}</p> : null}
+            <div className="grid gap-2">
+              <Label htmlFor="e-code">Mã NV</Label>
+              <Input
+                id="e-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder={suggestingCode ? "Đang tạo mã..." : "VD: NV001"}
+                required
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="e-name">Họ tên</Label>
+              <Input id="e-name" value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+            </div>
+            <div className="grid gap-2 sm:col-span-2">
+              <Label htmlFor="e-app-role">Vai trò đăng nhập & phân quyền menu</Label>
+              <Select
+                id="e-app-role"
+                value={appRoleId}
+                onChange={(e) => setAppRoleId(e.target.value)}
+                required
+              >
+                <option value="">-- Chọn vai trò --</option>
+                {roleOptions.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name} ({r.code})
+                  </option>
+                ))}
+              </Select>
+              <p className="text-[11px] text-[var(--on-surface-muted)]">
+                Chức danh lưu trong hồ sơ sẽ đồng bộ theo tên vai trò. Quản lý vai trò và quyền menu ở tab &quot;Vai trò &amp; phân quyền&quot;.
+              </p>
+            </div>
+            <div className="grid gap-2 sm:col-span-2">
+              <Label htmlFor="e-sal">Lương cơ bản</Label>
+              <CurrencyInput
+                id="e-sal"
+                min={0}
+                step={1000}
+                value={salary}
+                onChange={setSalary}
+                allowDecimal={false}
+                required
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="e-phone">Số điện thoại</Label>
+              <Input id="e-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="e-email">Email</Label>
+              <Input id="e-email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div className="grid gap-2 sm:col-span-2">
+              <Label htmlFor="e-address">Địa chỉ</Label>
+              <Input id="e-address" value={address} onChange={(e) => setAddress(e.target.value)} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="e-username">Tên đăng nhập nội bộ</Label>
+              <Input id="e-username" value={username} onChange={(e) => setUsername(e.target.value)} />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="e-password">Mật khẩu</Label>
+              <Input
+                id="e-password"
+                value={passwordPlain}
+                onChange={(e) => setPasswordPlain(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2 sm:col-span-2">
+              <Label htmlFor="e-notes">Ghi chú</Label>
+              <Input id="e-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+            <div className="flex items-center gap-3 sm:col-span-2">
+              <input
+                type="checkbox"
+                id="e-act"
+                className="h-5 w-5 rounded-[var(--radius-sm)] border border-[var(--border-ghost)]"
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
+              />
+              <Label htmlFor="e-act" className="normal-case tracking-normal">
+                Đang hoạt động
+              </Label>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 sm:col-span-2">
+              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+                Hủy
+              </Button>
+              <Button variant="primary" type="submit" disabled={pending}>
+                {pending ? "Đang lưu…" : "Lưu"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
