@@ -27,9 +27,8 @@ export async function POST(req: NextRequest) {
 
     if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
       // Môi trường Serverless (Vercel, Lambda)
-      const chromium = await import("@sparticuz/chromium");
-      chromium.setGraphicsMode(false);
-      chromium.setHeadlessMode(true);
+      const chromium = (await import("@sparticuz/chromium")).default;
+      chromium.setGraphicsMode = false;
       executablePath = await chromium.executablePath();
       launchArgs = chromium.args;
     } else {
