@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
     // RFC 5987: support Unicode filenames in HTTP headers
     const encodedFilename = encodeURIComponent(safeFilename);
 
-    return new NextResponse(pdfBuffer, {
+    return new NextResponse(pdfBuffer as any, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
